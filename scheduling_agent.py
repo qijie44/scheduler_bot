@@ -9,6 +9,16 @@ from datetime import datetime, timedelta
 from langchain_core.runnables import RunnableConfig
 import pprint
 import json
+from telegram import Update
+from telegram.ext import Application, MessageHandler, filters, ContextTypes
+import configparser
+from typing_extensions import TypedDict
+from langgraph.graph.message import add_messages
+
+config = configparser.ConfigParser()
+config.read("bot.ini")
+
+TELEGRAM_TOKEN = config["KEYS"]["BOT_TOKEN"]
 
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
@@ -52,8 +62,8 @@ def create_event(state: Annotated[dict, InjectedState]) -> str:
         response = f"Meeting has been successfully scheduled on {str(state['start_date'])} {str(state['start_time'])} at {state['location']} for {state['duration']} mins"
         if state["description"] != None:
             response += f"the information for the meeting are as follows: \n {state['description']}"
-    print(response)
-    return response
+    message = AIMessage(response)
+    return {"messages": message}
 
 @tool
 def set_description(description: str):
@@ -67,20 +77,6 @@ def set_description(description: str):
     print(description)
     return {"description": description}
 
-# depreciated
-# @tool
-# def get_current_day_information() -> str:
-#     """
-#     Returns a string with the current date and day of the week.
-
-#     The output is formatted as:
-#     "The date is dd/mm/yyyy. It is currently a DayOfWeek"
-
-#     Returns:
-#         str: A formatted string containing the current date and day name.
-#     """
-#     return f"The date is {datetime.now().strftime('%d/%m/%Y')}. It is currently a {datetime.now().strftime('%A')}"
-
 @tool
 def set_location(location: str) -> dict:
     """
@@ -91,26 +87,6 @@ def set_location(location: str) -> dict:
         location: location of the meeting as a string
     """
     return {"location": location}
-
-# depreciated 
-# @tool
-# def set_meeting_datetime(state: Annotated[dict, InjectedState], date: str, time: str) -> dict:
-#     """
-#     Purpose:
-#         Set the meeting in a future date and time.
-
-#     Args:
-#         state (dict): The current LangGraph state, injected at runtime.
-#         date (str): The date of the meeting, in ddmmyyyy format
-#         time (str): The time of the meeting, in hh:mm format
-#     """
-#     try:
-#         datetime.strptime(f"{date} {time}", "%d%m%Y %H:%M")
-#         return {
-#                 "start_time": f"{date} {time}"
-#                 }
-#     except:
-#         return "datetime has to be in ddmmyyyy hh:mm format!"
 
 @tool
 def set_meeting_date_from_day(state: Annotated[dict, InjectedState]) -> dict:
@@ -190,30 +166,27 @@ def scheduler_agent(state: AgentState) -> AgentState:
         - If the user wants to set a meeting a future day but does not provide the date, use the get_future_date tool to the future date and use set_meeting_date tool to set start date of the future meeting.
         - Once you have the date and time of the meeting, use set_meeting_date tool set_meeting_time tool before calling the create event tool
         - When the user gives the duration, use set_duration tool to set the duration
-        - When all the information (e.g. location, start time, duration) of the meeting is fixed, use the create_event tool to schedule the meeting""")
-    
+        - When all the information (e.g. location, start time, duration) of the meeting is fixed, use the create_event tool to schedule the meeting
+        - When the create_event tool is called successfully, end the conversation""")
+
     if not state["messages"]: 
-        user_input = input("I'm ready to help you schedule a meeting. When and where will it be? How long will it take?")
-        user_message = HumanMessage(content=user_input)
-        all_messages = [system_prompt] + list(state["messages"]) + [user_message]
-    elif isinstance(state["messages"][-1], ToolMessage):
-        all_messages = [system_prompt] + list(state["messages"])
+        state["messages"] = [AIMessage("I'm ready to help you schedule a meeting. When and where will it be? How long will it take?")]
     else:
-        user_input = input(state["messages"][-1].content)
-        print(f"\n USER: {user_input}")
-        user_message = HumanMessage(content=user_input)
-        all_messages = [system_prompt] + list(state["messages"]) + [user_message]
+        if isinstance(state["messages"][-1], ToolMessage):
+            all_messages = [system_prompt] + list(state["messages"])
+        elif isinstance(state["messages"][-1], HumanMessage):
+            user_message = state["messages"][-1]
+            all_messages = [system_prompt] + list(state["messages"]) + [user_message]
+        response = llm.invoke(all_messages)
+        print(f"\n AI: {response.content}")
+    
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            print(f"USING TOOLS: {[tc['name'] for tc in response.tool_calls]}")
 
-    response = llm.invoke(all_messages)
-
-    print(f"\n AI: {response.content}")
-    if hasattr(response, "tool_calls") and response.tool_calls:
-        print(f"USING TOOLS: {[tc['name'] for tc in response.tool_calls]}")
-
-    if not isinstance(state["messages"][-1], ToolMessage):
-        state["messages"] = state["messages"] + [user_message, response]
-    else:
-        state["messages"] = state["messages"] + [response]
+        if not isinstance(state["messages"][-1], ToolMessage):
+            state["messages"] = state["messages"] + [user_message, response]
+        else:
+            state["messages"] = state["messages"] + [response]
     return state
 
 def should_continue(state: AgentState) -> str:
@@ -223,10 +196,8 @@ def should_continue(state: AgentState) -> str:
     if not messages:
         return "continue"
 
-    if (isinstance(messages[-1], ToolMessage) and
-        "scheduled" in messages[-1].content.lower() and
-        "meeting" in messages[-1].content.lower()):
-        return "end"
+    if "scheduled" in messages[-1].content.lower() and "meeting" in messages[-1].content.lower():
+       return "end"
     else:
         return "continue"
     
@@ -259,13 +230,14 @@ graph.add_node("agent_node", scheduler_agent)
 graph.add_node("tool_node", ToolNode(tools))
 graph.add_node("merge_tool_output_node", merge_tool_output)
 
-graph.add_edge("agent_node", "tool_node")
+# graph.add_edge("agent_node", "tool_node")
 graph.add_edge("tool_node", "merge_tool_output_node")
+graph.add_edge("merge_tool_output_node", "agent_node")
 graph.add_conditional_edges(
-    "merge_tool_output_node",
+    "agent_node",
     should_continue,
     {
-        "continue": "agent_node",
+        "continue": "tool_node",
         "end": END,
     }
 )
@@ -276,27 +248,41 @@ app = graph.compile()
 
 # Code to save the graph
 image = app.get_graph().draw_mermaid_png()
-with open("test.png", "wb") as file:
+with open("new_graph.png", "wb") as file:
     file.write(image)
 
-def run_scheduling_agent():
-    print("\n ==== Scheduler ====")
+bot = Application.builder().token(TELEGRAM_TOKEN).build()
+user_states: dict[int, AgentState] = {}  # per‑user memory
 
-    state = {
-        "messages": [HumanMessage("the robotics meeting is at ACL, it will take place next tuesday at 2pm and will be 30mins")],
-        "location": None,
-        "start_time": None,
-        "start_date": None,
-        "duration": None,
-        "description": None,
-    }
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    text = update.message.text
 
-    config = RunnableConfig(recursion_limit=100)
-    for step in app.stream(state, stream_mode="values", config=config):
-        if "messages" in step:
-            print_messages(step["messages"])
+    # Initialize or retrieve state
+    state = user_states.setdefault(chat_id, {"messages": [],
+                                            "location": None,
+                                            "start_time": None,
+                                            "start_date": None,
+                                            "duration": None,
+                                            "description": None,
+                                            })
 
-    print("\n ==== Scheduler finished ====")
+    # Append user's message
+    state["messages"].append(HumanMessage(content=text))
+
+    # Run through LangGraph
+    for event in app.stream(state):
+        for v in event.values():
+            state = v
+            reply = v["messages"][-1]
+        print(f"reply: {reply}")
+        if isinstance(reply, AIMessage) and hasattr(reply, "tool_calls") and not reply.tool_calls:
+            print(f"reply: {reply}")
+            await context.bot.send_message(chat_id=chat_id, text=reply.content)
+            break  # stop after first response
+
+bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
 if __name__ == "__main__":
-    run_scheduling_agent()
+    print("Bot running…")
+    bot.run_polling()
