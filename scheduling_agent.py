@@ -14,9 +14,16 @@ from telegram.ext import Application, MessageHandler, filters, ContextTypes
 import configparser
 from typing_extensions import TypedDict
 from langgraph.graph.message import add_messages
+import os.path
+import pickle
+from googleapiclient.discovery import build
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
 
 config = configparser.ConfigParser()
 config.read("bot.ini")
+
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 TELEGRAM_TOKEN = config["KEYS"]["BOT_TOKEN"]
 
@@ -27,6 +34,7 @@ class AgentState(TypedDict):
     start_time: str
     duration: int
     description: str
+    user: Union[int, str] # TODO: update when we get the user to save their names
 
 model = ChatOllama(
     model="llama3.1",
@@ -45,6 +53,19 @@ def create_event(state: Annotated[dict, InjectedState]) -> str:
     print("---Create event here---")
     pprint.pp(state)
     failed_flag = False
+    event = {
+        "summary": "",
+        "location": "",
+        "description": "",
+        "start": {
+            "dateTime": "",
+            "timeZone": "Europe/London"
+        },
+        "end": {
+            "dateTime": "",
+            "timeZone": "Europe/London"
+        }
+    }
     response = "Failed to create event due to the following reasons:\n"
     if state["location"] == None:
         response += "- Location is missing\n"
@@ -59,9 +80,17 @@ def create_event(state: Annotated[dict, InjectedState]) -> str:
         response += "- duration is missing\n"
         failed_flag = True
     if not failed_flag:
+        event["location"] = state["location"]
+        date_str = f'{state["start_date"]} {state["start_time"]}'
+        event["start"]["dateTime"] = datetime.strptime(date_str, '%d/%m/%Y %H:%M').isoformat()
+        event["end"]["dateTime"] = (datetime.strptime(date_str, '%d/%m/%Y %H:%M') + timedelta(minutes=state["duration"])).isoformat()
+        event["summary"] = f"Meeting with {str(state["user"])}"
         response = f"Meeting has been successfully scheduled on {str(state['start_date'])} {str(state['start_time'])} at {state['location']} for {state['duration']} mins"
         if state["description"] != None:
             response += f"the information for the meeting are as follows: \n {state['description']}"
+        created_event = service.events().insert(calendarId=config["CALENDAR"]["ID"], body=event).execute()
+        print(f"Created event: {created_event['id']}")
+    
     message = AIMessage(response)
     return {"messages": message}
 
@@ -252,7 +281,7 @@ with open("new_graph.png", "wb") as file:
     file.write(image)
 
 bot = Application.builder().token(TELEGRAM_TOKEN).build()
-user_states: dict[int, AgentState] = {}  # per‑user memory
+user_states: dict[int, AgentState, str] = {}  # per‑user memory
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -265,6 +294,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                             "start_date": None,
                                             "duration": None,
                                             "description": None,
+                                            "user": update.effective_chat.id,
                                             })
 
     # Append user's message
@@ -280,6 +310,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"reply: {reply}")
             await context.bot.send_message(chat_id=chat_id, text=reply.content)
             break  # stop after first response
+
+creds = None
+
+if os.path.exists('token.pickle'):
+    with open('token.pickle', 'rb') as token:
+        creds = pickle.load(token)
+
+if not creds or not creds.valid:
+    if creds and creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+    else:
+        flow = InstalledAppFlow.from_client_secrets_file(
+            'credentials.json', SCOPES)
+        creds = flow.run_local_server(port=0)
+
+    with open('token.pickle', 'wb') as token:
+        pickle.dump(creds, token)
+
+service = build('calendar', 'v3', credentials=creds)
 
 bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
