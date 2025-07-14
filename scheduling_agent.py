@@ -186,17 +186,20 @@ llm = ChatOllama(
 ).bind_tools(tools)
 
 def scheduler_agent(state: AgentState) -> AgentState:
-    system_prompt = SystemMessage("""
+    system_prompt = SystemMessage(f"""
         You are scheduler, a helpful scheduling assistant. You are going to help the user schedule meetings 
-        by asking for location, start time and duration of the meetings. You will then create an event based on the information
-        given. Format all dates in dd/mm/yyyy format
+        by asking for location, start time and duration of the meetings. You will then create an event based on the information using the create_event tool
+        given. Format all dates in dd/mm/yyyy format. The date today is {datetime.now()}
 
         - If the user wants to set a meeting in the future, use the set_meeting_datetime tool to set the start datetime of the future meeting.
-        - If the user wants to set a meeting a future day but does not provide the date, use the get_future_date tool to the future date and use set_meeting_date tool to set start date of the future meeting.
+        - If the user wants to set a meeting a future day but does not provide the date, ask the user for the date in dd/mm/yyyy format
         - Once you have the date and time of the meeting, use set_meeting_date tool set_meeting_time tool before calling the create event tool
         - When the user gives the duration, use set_duration tool to set the duration
+        - When the user gives the location, use set_location tool to set the duration
         - When all the information (e.g. location, start time, duration) of the meeting is fixed, use the create_event tool to schedule the meeting
-        - When the create_event tool is called successfully, end the conversation""")
+        - The meeting is not scheduled until the create_event tool is run successfully
+        - When the create_event tool is called successfully, return the AImessage and end the conversation""")
+        
 
     if not state["messages"]: 
         state["messages"] = [AIMessage("I'm ready to help you schedule a meeting. When and where will it be? How long will it take?")]
