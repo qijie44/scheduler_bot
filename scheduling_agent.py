@@ -117,27 +117,27 @@ def set_location(location: str) -> dict:
     """
     return {"location": location}
 
-@tool
-def set_meeting_date_from_day(state: Annotated[dict, InjectedState]) -> dict:
-    """
-    Purpose:
-        Determines the number of days until a future meeting date based on user input and sets start_date with it
+# @tool
+# def set_meeting_date_from_day(state: Annotated[dict, InjectedState]) -> dict:
+#     """
+#     Purpose:
+#         Determines the number of days until a future meeting date based on user input and sets start_date with it
         
-    Args:
-        state (dict): The current LangGraph state, injected at runtime.
-    """
-    for message in reversed(state["messages"]):
-        if isinstance(message, HumanMessage):
-            information = message.content
-    query = f"""the information of the meeting are as follows. {information}. The date is {datetime.now().strftime('%d/%m/%Y')}. 
-                 It is currently a {datetime.now().strftime('%A')}. How many days is the meeting in?. Respond with a single number and nothing else"""
-    print(query)
-    response = model.invoke(query)
-    print(response)
-    try:
-        return {"start_date":(datetime.now() + timedelta(days=int(response.content))).strftime('%d/%m/%Y')}
-    except Exception as e:
-        print(f"Response error: {e}")    
+#     Args:
+#         state (dict): The current LangGraph state, injected at runtime.
+#     """
+#     for message in reversed(state["messages"]):
+#         if isinstance(message, HumanMessage):
+#             information = message.content
+#     query = f"""the information of the meeting are as follows. {information}. The date is {datetime.now().strftime('%d/%m/%Y')}. 
+#                  It is currently a {datetime.now().strftime('%A')}. How many days is the meeting in?. Respond with a single number and nothing else"""
+#     print(query)
+#     response = model.invoke(query)
+#     print(response)
+#     try:
+#         return {"start_date":(datetime.now() + timedelta(days=int(response.content))).strftime('%d/%m/%Y')}
+#     except Exception as e:
+#         print(f"Response error: {e}")    
 
 @tool
 def set_meeting_date_from_date(date: str) -> dict:
@@ -178,7 +178,7 @@ def set_duration( minutes: int) -> dict:
     """
     return {"duration": minutes}
 
-tools = [create_event, set_location, set_meeting_date_from_day, set_meeting_date_from_date, set_duration, set_meeting_time]
+tools = [create_event, set_location, set_meeting_date_from_date, set_duration, set_meeting_time]
 
 llm = ChatOllama(
     model="llama3-groq-tool-use",
