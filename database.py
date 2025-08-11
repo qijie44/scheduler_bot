@@ -28,7 +28,7 @@ def save_users():
     with open("users.json", "w") as file:
         file.write(json.dumps(users))
 
-def update_user(UUID: str, data: dict):
+def update_user(UUID: str, data: UserInfo):
     users[UUID] = data
 
 def load_data(UUID: str) -> dict:
