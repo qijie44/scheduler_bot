@@ -204,11 +204,9 @@ def scheduler_agent(state: AgentState) -> AgentState:
     if not state["messages"]: 
         state["messages"] = [AIMessage("I'm ready to help you schedule a meeting. When and where will it be? How long will it take?")]
     else:
-        if isinstance(state["messages"][-1], ToolMessage):
-            all_messages = [system_prompt] + list(state["messages"])
-        elif isinstance(state["messages"][-1], HumanMessage):
+        if isinstance(state["messages"][-1], HumanMessage):
             user_message = state["messages"][-1]
-            all_messages = [system_prompt] + list(state["messages"]) + [user_message]
+        all_messages = [system_prompt] + list(state["messages"])
         response = llm.invoke(all_messages)
         print(f"\n AI: {response.content}")
     
